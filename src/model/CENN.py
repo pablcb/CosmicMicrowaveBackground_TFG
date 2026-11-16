@@ -3,7 +3,7 @@
 
 """
 @author: Jose Manuel Casas: casasjm@uniovi.es
-CENN paper: https://arxiv.org/abs/2205.05623: 
+CENN paper: https://arxiv.org/abs/2205.05623:
 """
 
 # CENN modified by Laura & Sara
@@ -11,6 +11,39 @@ CENN paper: https://arxiv.org/abs/2205.05623:
 # This module defines the Cosmic microwave background
 # extraction neural network (CENN) architecture and trains it
 # For using it: python CENN_Execute.py <Number of GPU>
+
+"""
+CENN.py — Red neuronal completamente convolucional (tipo U-Net) para recuperar
+el CMB a partir de parches de 256x256 píxeles en 3 frecuencias (143, 217 y 353 GHz).
+
+Adaptado para el TFG "Aplicación de redes neuronales a imágenes del CMB para
+incrementar su resolución" (Pablo Claudio Baragaño, Universidad de Oviedo, 2025),
+a partir del código original de CENN (Casas et al. 2022).
+
+Funciones principales
+---------------------
+- build_model_Conv(nm_NNpar, nm_par): construye y compila el modelo.
+- CENN_train(nm_NNpar, nm_par): entrena la red con los sets de train/test y guarda
+  el mejor modelo en Models_<Filtro>/ junto con la curva de pérdidas.
+- CENN_TestValidation(nm_par): aplica el modelo entrenado al set de validación y
+  guarda las predicciones desnormalizadas (dataset "M") en Models_<Filtro>/.
+
+Configuraciones estudiadas en el TFG
+------------------------------------
+- NN ReLU:      4 capas conv + 4 deconv, activación ReLU.
+- NN ReLUExt:   6 capas conv + 6 deconv, activación ReLU.
+- NN LeakyReLU: 6 capas conv + 6 deconv, activación LeakyReLU (alpha = 0.2).
+Para cambiar entre ellas:
+  * Activación: línea `activation_function = ...` dentro de build_model_Conv.
+  * Profundidad: entrada de `deconv3` -> `(add2)` usa 6+6 capas;
+    `(conv4_activation_function)` usa 4+4 capas (conv5, conv6, deconv1 y deconv2
+    quedan fuera del grafo).
+
+Uso (desde esta carpeta):
+    python CENN.py
+con Parfile_CENN.par (hiperparámetros) y Parfile_I.par (rutas y tamaño de parche)
+en el directorio de trabajo. En main() se elige entre entrenar o validar.
+"""
 
 import tensorflow as tf
 import tensorflow.keras.backend as K
@@ -24,6 +57,12 @@ import json
 import matplotlib.pyplot as plt
 
 print (tf.__version__)
+
+
+def _stem(path):
+    # Nombre del archivo sin carpeta ni extensión (p. ej. ".../output_sims_train.h5" -> "output_sims_train").
+    # Sustituye al antiguo recorte fijo path[26:-3], que dependía de la longitud de la ruta.
+    return os.path.splitext(os.path.basename(path))[0]
 
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # tf.get_logger().setLevel('ERROR')
@@ -188,8 +227,10 @@ def CENN_train(nm_NNpar, nm_par):
 
     model.summary()
 
-    Checkpoint = keras.callbacks.ModelCheckpoint('Models_'+Filtro+'/'+train_file[26:-3]+'_checkpoint-{val_loss:.5f}-{epoch:02d}.h5', monitor='val_loss', save_best_only=True)
-    Best = keras.callbacks.ModelCheckpoint('Models_'+ Filtro+'/'+train_file[26:-3]+'_Red_'+ Filtro +'.h5', monitor='val_loss', save_best_only=True)
+    os.makedirs('Models_'+Filtro, exist_ok=True)
+
+    Checkpoint = keras.callbacks.ModelCheckpoint('Models_'+Filtro+'/'+_stem(train_file)+'_checkpoint-{val_loss:.5f}-{epoch:02d}.h5', monitor='val_loss', save_best_only=True)
+    Best = keras.callbacks.ModelCheckpoint('Models_'+ Filtro+'/'+_stem(train_file)+'_Red_'+ Filtro +'.h5', monitor='val_loss', save_best_only=True)
 
     # history = model.fit(inputs_train, labels_train, batch_size = batch_size, shuffle=True,
     #           epochs = num_epochs, verbose = 1, validation_freq = test_frequency,
@@ -208,7 +249,7 @@ def CENN_train(nm_NNpar, nm_par):
     # plt.xlabel('epoch')
     # plt.legend(['train', 'validation'], loc='upper left')
     # plt.show()
-    # plt.savefig('./Models_'+Filtro+'/'+validation_file[26:-3]+'_Accuracy_'+Filtro+'.pdf')
+    # plt.savefig('./Models_'+Filtro+'/'+_stem(validation_file)+'_Accuracy_'+Filtro+'.pdf')
     # "Loss"
     plt.plot(history.history['loss'])
     plt.plot(history.history['val_loss'])
@@ -217,10 +258,10 @@ def CENN_train(nm_NNpar, nm_par):
     plt.xlabel('epoch')
     plt.legend(['train', 'validation'], loc='upper left')
     # plt.show()
-    plt.savefig('./Models_'+Filtro+'/'+train_file[26:-3]+'_Loss_'+Filtro+'.pdf')
+    plt.savefig('./Models_'+Filtro+'/'+_stem(train_file)+'_Loss_'+Filtro+'.pdf')
     
     results = model.predict(inputs_test)
-    #loss_error = error(results, labels_test)   #porqe esta comentado?
+    #loss_error = error(results, labels_test)
     print(str(datetime.now()))
 
     pass
@@ -243,10 +284,10 @@ def CENN_TestValidation(nm_par):
 
     ###### to be checked
     # best_model_nm = Par["best_model_nm"]
-    out_file = './Models_'+Filtro+'/'+validation_file[26:-3]+'_Outputs_CENN_'+Filtro+'.h5'
+    out_file = './Models_'+Filtro+'/'+_stem(validation_file)+'_Outputs_CENN_'+Filtro+'.h5'
 
     # normalised validation dataset
-    Model_file_path = './Models_'+Filtro+'/'+train_file[26:-3]+'_Red_'+Filtro+'.h5'
+    Model_file_path = './Models_'+Filtro+'/'+_stem(train_file)+'_Red_'+Filtro+'.h5'
     print(Model_file_path)
 
     validation = h5py.File(validation_file, 'r')
@@ -362,7 +403,7 @@ def plot_validaton_simu(nm_par,nsim):
 
     ###### to be checked
     # best_model_nm = Par["best_model_nm"]
-    out_file = './Models_'+Filtro+'/'+validation_file[26:-3]+'_Outputs_CENN_'+Filtro+'.h5'
+    out_file = './Models_'+Filtro+'/'+_stem(validation_file)+'_Outputs_CENN_'+Filtro+'.h5'
 
     
     labels, inputs = read_validation_data(train_file, Patch_Size)
@@ -388,7 +429,7 @@ def plot_validaton_simu(nm_par,nsim):
     fig2=ax2.imshow(outputs[nsim,:,:,0])
     fig.colorbar(fig2, ax=ax2, fraction=0.046, pad=0.04)
 
-    savefig('./Models_'+Filtro+'/'+validation_file[26:-3]+'_Outputs_CENN_'+Filtro+'_'+str(nsim)+'.pdf')
+    savefig('./Models_'+Filtro+'/'+_stem(validation_file)+'_Outputs_CENN_'+Filtro+'_'+str(nsim)+'.pdf')
 
 pass
 

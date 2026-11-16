@@ -7,6 +7,33 @@
 # add Dust
 # add noise
 
+"""
+Simulate4CMB.py — Generación de parches simulados del cielo de microondas.
+
+Cada simulación es un parche de npix x npix píxeles (256x256, 90"/píxel) en una
+posición aleatoria del cielo (fuera del corte galáctico) y en tres frecuencias
+de Planck HFI (143, 217 y 353 GHz). El parche total incluye:
+  - CMB y polvo térmico galáctico (mapas del Planck Legacy Archive, proyección
+    gnomónica con healpy),
+  - fuentes puntuales extragalácticas (radio, infrarrojo y galaxias infrarrojas
+    de tipo tardío) simuladas con CORRSKY (González-Nuevo et al. 2005), usando
+    los modelos de cuentas de la carpeta counts/,
+  - ruido instrumental blanco con la sensibilidad de cada canal.
+
+Salida: un archivo .h5 con
+  - "M":  (n_sims, npix, npix, 3) -> parche total en [low, central, high],
+  - "M0": (n_sims, npix, npix, 1) -> etiqueta (señal CMB).
+
+Dependencias externas no incluidas en el repositorio:
+  - corrsky_v0124.py (simulador de fuentes puntuales; colocarlo en esta carpeta),
+  - mapas FITS de CMB y polvo del PLA, cuyas rutas se indican en el .par.
+
+Uso (desde esta carpeta):
+    python Simulate4CMB.py
+main() genera por defecto los mapas de cielo completo (figuras del capítulo 2);
+para generar los datasets, descomentar la llamada a make_parallel_simu4CMB.
+"""
+
 def make_parallel_simu4CMB(in_parfile, out_file):
     from multiprocessing import Pool
     from datetime import datetime
@@ -594,8 +621,9 @@ def plot_fullsky_from_parfile(parfile_path):
 
 
 def main():
-  plot_fullsky_from_parfile('/content/gdrive/MyDrive/TFG Simulacion/sim_cfreq217.par')
-  #make_parallel_simu4CMB('/content/gdrive/MyDrive/TFG Simulacion/sim_cfreq217.par', '/content/gdrive/MyDrive/TFG Simulacion/outs/output_sims')
+  # Rutas relativas a src/simulation/ (en el TFG se ejecutó en Google Colab con Google Drive)
+  plot_fullsky_from_parfile('./sim_cfreq217.par')
+  #make_parallel_simu4CMB('./sim_cfreq217.par', '../../data/output_sims_train')
 
 if __name__ == "__main__":
         main()

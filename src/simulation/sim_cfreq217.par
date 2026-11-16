@@ -1,0 +1,40 @@
+{
+    "n_sims": 10000,
+    "npix": 256,
+    "pixsize": 90.0,
+    "Sn": -4.5,
+    "Sx": 2.0,
+    "freq": 217,
+    "freq_low": 143,
+    "freq_high": 353,
+    "fwhm": 294.0,
+    "fwhm_low": 433.2,
+    "fwhm_high": 295.2,
+    "spp": 0.78,
+    "spp_low": 0.55,
+    "spp_high": 2.56,
+    "mean_alpha_radio_low": -0.7,
+    "mean_alpha_radio_high": 2.5,
+    "mean_alpha_IR_low": -0.7,
+    "mean_alpha_IR_high": 2.5,
+    "gal_cut": 30.0,
+    "contaminants": ["cmb", "dust"],
+    "channels": [
+        {
+            "cmb": "RUTA/A/mapa_cmb_217GHz.fits",
+            "dust": "RUTA/A/mapa_dust_217GHz.fits"
+        }
+    ],
+    "channels_low": [
+        {
+            "cmb": "RUTA/A/mapa_cmb_143GHz.fits",
+            "dust": "RUTA/A/mapa_dust_143GHz.fits"
+        }
+    ],
+    "channels_high": [
+        {
+            "cmb": "RUTA/A/mapa_cmb_353GHz.fits",
+            "dust": "RUTA/A/mapa_dust_353GHz.fits"
+        }
+    ]
+}

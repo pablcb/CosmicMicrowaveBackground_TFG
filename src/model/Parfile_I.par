@@ -1,0 +1,7 @@
+{
+    "Patch_Size": 256,
+    "Filtro": "I",
+    "train_file": "../../data/output_sims_train.h5",
+    "test_file": "../../data/output_sims_test.h5",
+    "validation_file": "../../data/output_sims_validate.h5"
+}

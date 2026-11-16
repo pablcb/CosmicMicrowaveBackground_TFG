@@ -2,12 +2,31 @@
 # -*- coding: utf-8 -*-
 # PEP 8 Style
 
+"""
+CMB_Analysis.py — Espectro de potencia angular TT del CMB.
+
+Estima el espectro de potencia (D_l = l(l+1)C_l / 2pi, en µK^2) mediante la FFT 2D
+de los parches de 256x256 píxeles (90"/píxel) para:
+  - la entrada del CMB (etiqueta),
+  - la salida de cada modelo,
+  - el mapa de residuos (entrada - salida),
+y lo reagrupa en bins de multipolos (25 para l <= 1000 y 200 para l > 1000).
+Dibuja tres paneles: comparación de espectros, diferencia Delta D_l y espectro de
+los residuos, comparando los modelos de compare_file_list.
+Genera las figuras 26, 27 y 31-33 de la memoria (con pequeñas variaciones en la
+función de dibujo para cada figura).
+
+Uso (desde esta carpeta):
+    python CMB_Analysis.py
+con los archivos .h5 en data/PowerSpec/ (ver data/README.md).
+"""
+
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Directorio de los datos
-datasets_directory = "C:/Users/pablo/Desktop/TFG/Comprobacion Simulacion/PowerSpec/"
+# Directorio de los datos (relativo a src/analysis/)
+datasets_directory = "../../data/PowerSpec/"
 
 # Rutas de los archivos .h5 de salida de red neuronal
 compare_file_list = [
@@ -417,7 +436,7 @@ class Plots():
         for flag in range(len(compare_file_list)):
             mean_Pk_input, std_Pk_input, mean_Pk_output, std_Pk_output, mean_Pk_residual, std_Pk_residual, l_bin = Analysis.linear_rebinning_dT_By_Low_And_High_Multipoles_byLaura(flag)
 
-            a0.plot(l_bin, mean_Pk_output, color=colors[flag], linestyle='-', label={labels[flag]} )
+            a0.plot(l_bin, mean_Pk_output, color=colors[flag], linestyle='-', label=labels[flag])
             a0.fill_between(l_bin, mean_Pk_input - std_Pk_input, mean_Pk_input + std_Pk_input, color=colors[flag], alpha=0.1)
             a0.fill_between(l_bin, mean_Pk_output - std_Pk_output, mean_Pk_output + std_Pk_output, color=colors[flag], alpha=0.1)
 

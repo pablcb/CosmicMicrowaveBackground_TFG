@@ -1,0 +1,9 @@
+{
+    "learning_rate": 0.05,
+    "batch_size": 32,
+    "num_epochs": 500,
+    "test_frequency": 1,
+    "L2_regularizer_value": 0.00001,
+    "channels_order": "channels_last",
+    "padding_type": "same"
+}
