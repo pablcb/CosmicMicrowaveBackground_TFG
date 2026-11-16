@@ -105,6 +105,7 @@ La red (`src/model/CENN.py`) parte de **CENN** (*Cosmic microwave background Ext
 - **Skip connections:** se concatenan los mapas de cada bloque convolucional con su bloque de deconvolución, para recuperar detalle de pequeña escala.
 - **Salida:** un parche de 256×256 con el CMB recuperado, que después se desnormaliza.
 - **Entrenamiento:** pérdida MSE, optimizador Adagrad y regularización L2.
+- **Configurable:** función de activación y profundidad se eligen en `Parfile_CENN.par`, sin tocar el código.
 
 <p align="center">
   <img src="figures/arquitectura_cenn.png" width="100%" alt="Arquitectura CENN">
@@ -206,7 +207,7 @@ CosmicMicrowaveBackground_TFG/
     │   └── DecreaseRES.py        # Degradación de resolución con filtro gaussiano
     ├── model/
     │   ├── CENN.py               # Arquitectura, entrenamiento y validación de la red
-    │   ├── Parfile_CENN.par      # Hiperparámetros
+    │   ├── Parfile_CENN.par      # Hiperparámetros y configuración de la red
     │   └── Parfile_I.par         # Rutas de los datasets y tamaño de parche
     └── analysis/
         ├── Validate_sims.py      # Mapas: entrada, CMB, salida y residuos
@@ -237,39 +238,48 @@ Cada script se ejecuta **desde su propia carpeta**. Las rutas son relativas a el
 **1. Simular los datasets** (`src/simulation/`)
 ```bash
 cd src/simulation
-# Ajusta sim_cfreq217.par (rutas a los mapas del PLA, n_sims...) y en main()
-# descomenta make_parallel_simu4CMB. Ejecuta una vez por conjunto:
-#   train: n_sims = 10000 -> ../../data/output_sims_train
-#   test:  n_sims = 3000  -> ../../data/output_sims_test
-#   validate: n_sims = 1000 -> ../../data/output_sims_validate
-python Simulate4CMB.py
+# Ajusta en sim_cfreq217.par las rutas a los mapas del PLA
+python Simulate4CMB.py simulate --out ../../data/output_sims_train    --n_sims 10000
+python Simulate4CMB.py simulate --out ../../data/output_sims_test     --n_sims 3000
+python Simulate4CMB.py simulate --out ../../data/output_sims_validate --n_sims 1000
+python Simulate4CMB.py fullsky    # mapas de cielo completo (figuras 10 y 11)
 ```
+Los mapas se guardan en K. Con `SAVE_DEBUG_PLOTS = True`, al principio del script, se guardan además las figuras de cada componente (figuras 12 y 13 de la memoria).
 
 **2. (Opcional) Degradar la resolución** (`src/preprocessing/`)
 ```bash
 cd src/preprocessing
-# Cambia INPUT_FILE / OUTPUT_FILE para cada conjunto
-python DecreaseRES.py
+python DecreaseRES.py             # train, test y validate -> data/DecreaseRES/
+python DecreaseRES.py --sets validate --plot
 ```
 
 **3. Entrenar y validar la red** (`src/model/`)
 ```bash
 cd src/model
-# Parfile_I.par: rutas a train/test/validación. Parfile_CENN.par: hiperparámetros.
-# En main(): CENN_train(...) para entrenar, CENN_TestValidation(...) para validar.
-python CENN.py
+python CENN.py train       # entrena y guarda el mejor modelo (según val_loss)
+python CENN.py validate    # predicciones sobre el set de validación
+python CENN.py both --gpu 0
 ```
-Esto genera, dentro de `src/model/Models_I/`, el mejor modelo (`*_Red_I.h5`), la curva de pérdidas y las predicciones sobre la validación (`*_Outputs_CENN_I.h5`). Las tres configuraciones se seleccionan como se explica en la cabecera de `CENN.py` (función de activación y entrada de `deconv3`).
+`Parfile_I.par` contiene las rutas de los datasets y `Parfile_CENN.par` los hiperparámetros y la configuración de la red:
+
+| Configuración | `"activation"` | `"depth"` |
+|:--|:--:|:--:|
+| NN ReLU | `"relu"` | `4` |
+| NN ReLUExt | `"relu"` | `6` |
+| NN LeakyReLU (por defecto) | `"leaky_relu"` | `6` |
+
+Para los casos de baja resolución basta con apuntar `Parfile_I.par` a los archivos de `data/DecreaseRES/`. Los resultados se guardan en `src/model/Models_I/`: el mejor modelo (`*_Red_I.h5`), la curva de pérdidas y las predicciones (`*_Outputs_CENN_I.h5`).
 
 **4. Analizar los resultados** (`src/analysis/`)
 ```bash
 cd src/analysis
 python Validate_sims.py   # mapas de residuos
-python Histogramas.py     # histogramas y estadística de residuos
+python Histogramas.py     # histogramas e incertidumbre global combinada
 python CMB_Analysis.py    # espectro de potencia
 ```
+Cada script indica al principio qué archivos de `data/` usa. Basta con descomentar el par de rutas del caso que se quiera analizar (ver [`data/README.md`](data/README.md)).
 
-Los valores de `Parfile_CENN.par` son los hiperparámetros por defecto de CENN, tal y como aparecen en el propio código. Los parámetros de simulación son los descritos en el capítulo 2 de la memoria.
+Los hiperparámetros de `Parfile_CENN.par` son los de CENN tal y como aparecen en el propio código (Adagrad, learning rate 0,05, batch 32, 500 épocas, L2 = 10⁻⁵). Los parámetros de simulación son los descritos en el capítulo 2 de la memoria.
 
 ## Referencias
 

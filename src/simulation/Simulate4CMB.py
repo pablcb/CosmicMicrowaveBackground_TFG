@@ -20,416 +20,236 @@ de Planck HFI (143, 217 y 353 GHz). El parche total incluye:
     los modelos de cuentas de la carpeta counts/,
   - ruido instrumental blanco con la sensibilidad de cada canal.
 
-Salida: un archivo .h5 con
+Cada parche se recorta con una rotación aleatoria alrededor de su centro.
+
+Salida: un archivo .h5 con los mapas en K
   - "M":  (n_sims, npix, npix, 3) -> parche total en [low, central, high],
-  - "M0": (n_sims, npix, npix, 1) -> etiqueta (señal CMB).
+  - "M0": (n_sims, npix, npix, 1) -> etiqueta (CMB a la frecuencia central).
 
 Dependencias externas no incluidas en el repositorio:
   - corrsky_v0124.py (simulador de fuentes puntuales; colocarlo en esta carpeta),
   - mapas FITS de CMB y polvo del PLA, cuyas rutas se indican en el .par.
 
 Uso (desde esta carpeta):
-    python Simulate4CMB.py
-main() genera por defecto los mapas de cielo completo (figuras del capítulo 2);
-para generar los datasets, descomentar la llamada a make_parallel_simu4CMB.
+    python Simulate4CMB.py simulate --out ../../data/output_sims_train --n_sims 10000
+    python Simulate4CMB.py simulate --out ../../data/output_sims_test --n_sims 3000
+    python Simulate4CMB.py simulate --out ../../data/output_sims_validate --n_sims 1000
+    python Simulate4CMB.py fullsky     # mapas de cielo completo (figuras 10 y 11)
+Con SAVE_DEBUG_PLOTS = True se guardan figuras de cada componente (figuras 12 y 13).
 """
 
-def make_parallel_simu4CMB(in_parfile, out_file):
+# Guardar figuras de control de cada componente en cada simulación (lento y,
+# en paralelo, todas sobrescriben los mismos archivos): activar solo para depurar
+# o para generar las figuras del capítulo 2 con una única simulación.
+SAVE_DEBUG_PLOTS = False
+
+
+def make_parallel_simu4CMB(in_parfile, out_file, n_sims=None):
+    """
+    Genera n_sims simulaciones (por defecto, Simulation_Parameters['n_sims']) en
+    paralelo y las guarda en out_file + '.h5'. Los mapas se guardan en K (como esperan los scripts de análisis).
+    """
     from multiprocessing import Pool
     from datetime import datetime
     import json
     from functools import partial
-    from numpy import zeros, vstack, shape, max
-    import matplotlib.pyplot as plt
+    from numpy import zeros
 
     print(str(datetime.now()))
 
-    with open(in_parfile) as par_file: 
+    with open(in_parfile) as par_file:
         Simulation_Parameters = json.loads(par_file.read())
 
+    if n_sims is None:
+        n_sims = Simulation_Parameters['n_sims']
+
     Lon, Lat = CreateRandomCatalogue(nmcat = None,
-                                     Ns = Simulation_Parameters['n_sims'], ex_rad = 6.,
+                                     Ns = n_sims, ex_rad = 6.,
                                      cut = Simulation_Parameters["gal_cut"])
 
-    pos = [[x,y] for x, y in zip(Lon,Lat)]
-    
+    pos = [[x, y] for x, y in zip(Lon, Lat)]
+
     fun = partial(MakeSimu, nm_parfile = in_parfile)
 
-    p = Pool()
-    sims = p.map(fun, pos)
+    with Pool() as p:
+        sims = p.map(fun, pos)
 
-    # sims is a list of MakeSimu outputs.
-    # sims = [total_map_low, total_map, total_map_high, label]_1, ...
+    # sims = [(total_map_low, total_map, total_map_high, label), ...] en µK
+    npix = Simulation_Parameters['npix']
+    total_map_list = zeros((len(sims), npix, npix, 3))
+    label_list = zeros((len(sims), npix, npix, 1))
 
-    total_map_list = zeros((len(sims), Simulation_Parameters['npix'],
-                            Simulation_Parameters['npix'], 3))
-    label_list = zeros((len(sims),Simulation_Parameters['npix'],Simulation_Parameters['npix'], 1))
-    
     for i in range(len(sims)):
-        # lower freq
-        total_map_list[i,:,:,0] = sims[i][0]       
-        # central freq
-        total_map_list[i,:,:,1] = sims[i][1]       
+        total_map_list[i, :, :, 0] = sims[i][0]    # frecuencia baja
+        total_map_list[i, :, :, 1] = sims[i][1]    # frecuencia central
+        total_map_list[i, :, :, 2] = sims[i][2]    # frecuencia alta
+        label_list[i, :, :, 0] = sims[i][3]        # CMB (frecuencia central)
 
-        label_list[i,:,:,0] = sims[i][3]
-        # higher freq
-        total_map_list[i,:,:,2] = sims[i][2]       
+    # µK -> K
+    write2h5(total_map_list * 1e-6, label_list * 1e-6, out_file + '.h5')
 
-    write2h5(total_map_list, label_list, out_file + '.h5')
-     
-    p.terminate()
     print(str(datetime.now()))
 
-    pass
+
+def _debug_plot(image, filename):
+    """Guarda una figura de control si SAVE_DEBUG_PLOTS está activado."""
+    if not SAVE_DEBUG_PLOTS:
+        return
+    import matplotlib.pyplot as plt
+    plt.figure(1)
+    plt.imshow(image), plt.colorbar()
+    plt.savefig(filename)
+    plt.close()
+
+
+def _point_sources(Simulation_Parameters, sncmodel, Sn, Sx, alpha_low_key, alpha_high_key, fac, fac_low, fac_high, name):
+    """
+    Simula un fondo de fuentes puntuales con CORRSKY a la frecuencia central y lo
+    extrapola a las frecuencias baja y alta con un índice espectral aleatorio.
+    Devuelve los tres mapas en µK.
+    """
+    from corrsky_v0124 import corrsky
+    from numpy import random
+
+    bk_map, _, _, _ = corrsky(nu = Simulation_Parameters['freq'],
+                              npix = Simulation_Parameters['npix'],
+                              pixsize = Simulation_Parameters['pixsize'],
+                              sncmodel = sncmodel, pkmodel = 'lapi11',
+                              Sn = Sn, Sx = Sx)
+
+    alpha = random.normal(Simulation_Parameters[alpha_low_key], 0.05)
+    bk_map_low = bk_map * (Simulation_Parameters['freq_low'] / Simulation_Parameters['freq']) ** alpha
+
+    alpha = random.normal(Simulation_Parameters[alpha_high_key], 0.05)
+    bk_map_high = bk_map * (Simulation_Parameters['freq_high'] / Simulation_Parameters['freq']) ** alpha
+
+    # Jy/píxel -> µK (la conversión se aplica una sola vez)
+    bk_map = bk_map * fac
+    bk_map_low = bk_map_low * fac_low
+    bk_map_high = bk_map_high * fac_high
+
+    _debug_plot(bk_map, name + '.pdf')
+    _debug_plot(bk_map_low, name + '_low.pdf')
+    _debug_plot(bk_map_high, name + '_high.pdf')
+
+    return bk_map_low, bk_map, bk_map_high
 
 
 def MakeSimu(pos, nm_parfile):
-    
-    from corrsky_v0124 import corrsky, fluxassoc
-    import astropy
-    from astropy import units as u
+    """
+    Genera una simulación en la posición pos = [lon, lat] (grados galácticos).
+    Devuelve (total_map_low, total_map, total_map_high, label) en µK, donde label
+    es el CMB a la frecuencia central.
+    """
     import json
-    import matplotlib.pyplot as plt
     from scipy.ndimage import gaussian_filter
-    from numpy import sqrt, log, zeros, random, std, zeros_like, mean, std, pi
+    from numpy import sqrt, log, zeros, random, pi, asarray
     import healpy as hp
-    
-    with open(nm_parfile) as par_file: 
+
+    with open(nm_parfile) as par_file:
         Simulation_Parameters = json.loads(par_file.read())
 
-    # make patch with random radio background sources
-    
-    Rbk_map, Rbk_mapp, R_bkcat, Rbk_catp = corrsky(nu = Simulation_Parameters['freq'],
-                                                   npix = Simulation_Parameters['npix'],
-                                                   pixsize = Simulation_Parameters['pixsize'],
-                                                   sncmodel = 'tucci', pkmodel = 'lapi11',
-                                                   Sn = Simulation_Parameters['Sn'],
-                                                   Sx = Simulation_Parameters['Sx'])
-    Rbk_map_low = zeros_like(Rbk_map)
-    Rbk_map_high = zeros_like(Rbk_map)
+    npix = Simulation_Parameters['npix']
+    pixsize = Simulation_Parameters['pixsize']   # arcsec
 
-    fac = conversion_factor_Jy_K(Simulation_Parameters["freq"],
-                                            Simulation_Parameters["pixsize"]/60.) * 1e6
-    fac_low = conversion_factor_Jy_K(Simulation_Parameters["freq_low"],
-                                 Simulation_Parameters["pixsize"]/60.) * 1e6
-    fac_high = conversion_factor_Jy_K(Simulation_Parameters["freq_high"],
-                                 Simulation_Parameters["pixsize"]/60.) * 1e6
+    # Factores de conversión Jy/píxel -> µK_CMB
+    fac = conversion_factor_Jy_K(Simulation_Parameters["freq"], pixsize / 60.) * 1e6
+    fac_low = conversion_factor_Jy_K(Simulation_Parameters["freq_low"], pixsize / 60.) * 1e6
+    fac_high = conversion_factor_Jy_K(Simulation_Parameters["freq_high"], pixsize / 60.) * 1e6
 
-    alpha = 0.
-    alpha = random.normal(Simulation_Parameters['mean_alpha_radio_low'], 0.05, 1)
-    Rbk_map_low =  Rbk_map * (
-            Simulation_Parameters['freq_low'] / Simulation_Parameters['freq']) ** alpha
+    # ------------------------------------------------------------------
+    # Fuentes puntuales extragalácticas (CORRSKY)
+    # ------------------------------------------------------------------
+    # Fondo de radio (cuentas de Tucci et al. 2011)
+    R_low, R, R_high = _point_sources(Simulation_Parameters, 'tucci',
+                                      Simulation_Parameters['Sn'], Simulation_Parameters['Sx'],
+                                      'mean_alpha_radio_low', 'mean_alpha_radio_high',
+                                      fac, fac_low, fac_high, 'Rbk_map')
+    # Fondo infrarrojo (Lapi et al. 2011)
+    IR_low, IR, IR_high = _point_sources(Simulation_Parameters, 'lapi11',
+                                         -4.5, min(Simulation_Parameters['Sx'], 0.0),
+                                         'mean_alpha_IR_low', 'mean_alpha_IR_high',
+                                         fac, fac_low, fac_high, 'IRbk_map')
+    # Galaxias infrarrojas de tipo tardío
+    IRLT_low, IRLT, IRLT_high = _point_sources(Simulation_Parameters, 'IRLT',
+                                               -4.5, Simulation_Parameters['Sx'],
+                                               'mean_alpha_IR_low', 'mean_alpha_IR_high',
+                                               fac, fac_low, fac_high, 'IRLTbk_map')
 
-    alpha = random.normal(Simulation_Parameters['mean_alpha_radio_high'], 0.05, 1)
-    Rbk_map_high =  Rbk_map * (
-            Simulation_Parameters['freq_high'] / Simulation_Parameters['freq']) ** alpha
-    
-    Rbk_map *=fac
-    Rbk_map_low *=fac_low
-    Rbk_map_high *=fac_high
-            
-    plt.figure(1)
-    plt.imshow(Rbk_map), plt.colorbar()
-    plt.savefig('Rbk_map.pdf')
-    plt.close()
+    # Suma y convolución con el haz de cada canal (FWHM en arcsec -> sigma en píxeles)
+    fwhm2sigma = 1. / (2. * sqrt(2. * log(2.)))
+    sigma = Simulation_Parameters["fwhm"] * fwhm2sigma / pixsize
+    sigma_low = Simulation_Parameters["fwhm_low"] * fwhm2sigma / pixsize
+    sigma_high = Simulation_Parameters["fwhm_high"] * fwhm2sigma / pixsize
 
-    plt.figure(1)
-    plt.imshow(Rbk_map_low), plt.colorbar()
-    plt.savefig('Rbk_map_low.pdf')
-    plt.close()
+    Tmap = gaussian_filter(R + IR + IRLT, sigma)
+    Tmap_low = gaussian_filter(R_low + IR_low + IRLT_low, sigma_low)
+    Tmap_high = gaussian_filter(R_high + IR_high + IRLT_high, sigma_high)
 
-    plt.figure(1)
-    plt.imshow(Rbk_map_high), plt.colorbar()
-    plt.savefig('Rbk_map_high.pdf')
-    plt.close()
+    _debug_plot(Tmap, 'Tmap.pdf')
+    _debug_plot(Tmap_low, 'Tmap_low.pdf')
+    _debug_plot(Tmap_high, 'Tmap_high.pdf')
 
-    # make patch with IR background sources 
-    IRbk_map, IRbk_mapp,IR_bkcat, IRbk_catp = corrsky(nu = Simulation_Parameters['freq'],
-                                                      npix = Simulation_Parameters['npix'],
-                                                      pixsize = Simulation_Parameters['pixsize'],
-                                                      sncmodel = 'lapi11', pkmodel = 'lapi11',
-                                                      Sn = -4.5, 
-                                                      Sx = min(Simulation_Parameters['Sx'],0.0))
-    
-    IRbk_map_low = zeros_like(IRbk_map)
-    IRbk_map_high = zeros_like(IRbk_map)
-    
-    alpha = 0.
-
-    alpha = random.normal(Simulation_Parameters['mean_alpha_IR_low'], 0.05, 1)
-    IRbk_map_low =  IRbk_map * (
-            Simulation_Parameters['freq_low'] / Simulation_Parameters['freq']) ** alpha
-
-    alpha = random.normal(Simulation_Parameters['mean_alpha_IR_high'], 0.05, 1)
-    IRbk_map_high = IRbk_map * (
-            Simulation_Parameters['freq_high'] / Simulation_Parameters['freq']) ** alpha
-    
-    IRbk_map *=fac
-    IRbk_map_low *=fac_low
-    IRbk_map_high *=fac_high
-            
-    plt.figure(1)
-    plt.imshow(IRbk_map), plt.colorbar()
-    plt.savefig('IRbk_map.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(IRbk_map_low), plt.colorbar()
-    plt.savefig('IRbk_map_low.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(IRbk_map_high), plt.colorbar()
-    plt.savefig('IRbk_map_high.pdf')
-    plt.close()
-
-    # make patch with IRLT sources
-    IRLTbk_map, IRLTbk_mapp, IRLT_bkcat, IRLTbk_catp = corrsky(nu = Simulation_Parameters['freq'],
-                                                               npix = Simulation_Parameters['npix'],
-                                                               pixsize = Simulation_Parameters['pixsize'],
-                                                               sncmodel = 'IRLT', pkmodel = 'lapi11',
-                                                               Sn = -4.5, Sx = Simulation_Parameters['Sx'])
-    IRLTbk_map_low = zeros_like(IRLTbk_map)
-    IRLTbk_map_high = zeros_like(IRLTbk_map)
-    
-    alpha = 0.
-
-    alpha = random.normal(Simulation_Parameters['mean_alpha_IR_low'], 0.05, 1)
-    IRLTbk_map_low =  IRLTbk_map * (
-            Simulation_Parameters['freq_low'] / Simulation_Parameters['freq']) ** alpha
-
-    alpha = random.normal(Simulation_Parameters['mean_alpha_IR_high'], 0.05, 1)
-    IRLTbk_map_high = IRLTbk_map * (
-            Simulation_Parameters['freq_high'] / Simulation_Parameters['freq']) ** alpha
-            
-    alpha = 0.
-
-    IRLTbk_map *=fac
-    IRLTbk_map_low *=fac_low
-    IRLTbk_map_high *=fac_high
-
-    plt.figure(1)
-    plt.imshow(IRLTbk_map), plt.colorbar()
-    plt.savefig('IRLTbk_map.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(IRLTbk_map_low), plt.colorbar()
-    plt.savefig('IRLTbk_map_low.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(IRLTbk_map_high), plt.colorbar()
-    plt.savefig('IRLTbk_map_high.pdf')
-    plt.close()
-
-    
-    # Sum and smoothing
-    sigma = Simulation_Parameters["fwhm"] / (2. * sqrt(2. * log(2.)))
-    sigma = sigma / Simulation_Parameters["pixsize"]
-    sigma_low = Simulation_Parameters["fwhm_low"] / (2. * sqrt(2. * log(2.))) 
-    sigma_low = sigma / Simulation_Parameters["pixsize"]
-    sigma_high = Simulation_Parameters["fwhm_high"] / (2. * sqrt(2. * log(2.))) 
-    sigma_high = sigma / Simulation_Parameters["pixsize"]
-    
-
-
-    Tmap = Rbk_map + IRbk_map + IRLTbk_map
-    Tmap_low = Rbk_map_low + IRbk_map_low + IRLTbk_map_low
-    Tmap_high = Rbk_map_high + IRbk_map_high + IRLTbk_map_high
-    
-    Tmap *= fac
-    Tmap = gaussian_filter(Tmap, sigma)
-
-    Tmap_low *= fac_low
-    Tmap_low = gaussian_filter(Tmap_low, sigma_low)
-
-    Tmap_high *= fac_high
-    Tmap_high = gaussian_filter(Tmap_high, sigma_high)
-
-    plt.figure(1)
-    plt.imshow(Tmap), plt.colorbar()
-    plt.savefig('Tmap.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(Tmap_low), plt.colorbar()
-    plt.savefig('Tmap_low.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(Tmap_high), plt.colorbar()
-    plt.savefig('Tmap_high.pdf')
-    plt.close()
-    
-    # add contaminants
-
+    # ------------------------------------------------------------------
+    # CMB y contaminantes difusos (mapas HEALPix del PLA)
+    # ------------------------------------------------------------------
     if not pos:
         Lon, Lat = CreateRandomCatalogue(nmcat = None, Ns = 1, ex_rad = 6.,
-                                     cut = Simulation_Parameters["gal_cut"])
-        pos = [Lon, Lat]
-    
-    patch = zeros((Simulation_Parameters['npix'], Simulation_Parameters['npix']))
-    patch_low = zeros((Simulation_Parameters['npix'], Simulation_Parameters['npix']))
-    patch_high = zeros((Simulation_Parameters['npix'], Simulation_Parameters['npix']))
+                                         cut = Simulation_Parameters["gal_cut"])
+        pos = [Lon[0], Lat[0]]
 
-    label = zeros((Simulation_Parameters['npix'], Simulation_Parameters['npix']))
-    
+    # Rotación aleatoria del parche alrededor de su centro
+    rot = [pos[0], pos[1], random.uniform(0., 360.)]
+
+    bands = {"central": "channels", "low": "channels_low", "high": "channels_high"}
+    patches = {band: zeros((npix, npix)) for band in bands}
+    label = None
+
     for comp in Simulation_Parameters["contaminants"]:
+        for band, key in bands.items():
+            nm_map = Simulation_Parameters[key][0][comp]
+            imap = hp.fitsfunc.read_map(nm_map, field=0, memmap = True)
+            omap = hp.visufunc.gnomview(imap, rot = rot, xsize = npix,
+                                        reso = pixsize / 60.,
+                                        notext = True, return_projected_map = True,
+                                        no_plot = True)
+            omap = asarray(omap, dtype=float) * 1e6   # K -> µK
 
-        # central freq       
-        nm_map = Simulation_Parameters["channels"][0][comp]     
-        imap = hp.fitsfunc.read_map(nm_map, field=0, memmap = True)
-        omap = hp.visufunc.gnomview(imap, rot = pos, xsize = Simulation_Parameters['npix'],
-                                    reso = Simulation_Parameters['pixsize'] / 60.,
-                                    notext = True, return_projected_map = True,
-                                    no_plot = True)
+            # La etiqueta es el CMB a la frecuencia central
+            if comp == "cmb" and band == "central":
+                label = omap.copy()
 
-        if comp == "cmb":
-            label = omap
-            omap *= 1e6
-            plt.figure(1)
-            plt.imshow(omap), plt.colorbar()
-            plt.savefig('Label.pdf')
-            plt.close()
+            _debug_plot(omap, comp + ('' if band == 'central' else '_' + band) + '.pdf')
+            patches[band] += omap
 
-        if comp == "dust":
-            label = omap
-            omap *= 1e6
-            plt.figure(1)
-            plt.imshow(omap), plt.colorbar()
-            plt.savefig('dust.pdf')
-            plt.close()
+    if label is None:
+        raise ValueError('"cmb" debe estar en la lista "contaminants" del archivo de parámetros.')
 
-        patch += omap
+    patch, patch_low, patch_high = patches["central"], patches["low"], patches["high"]
 
-        
-        # lower freq       
-        nm_map = Simulation_Parameters["channels_low"][0][comp]
-        imap = hp.fitsfunc.read_map(nm_map, field=0, memmap = True)
-        omap = hp.visufunc.gnomview(imap, rot = pos, xsize = Simulation_Parameters['npix'],
-                                    reso = Simulation_Parameters['pixsize'] / 60.,
-                                    notext = True, return_projected_map = True,
-                                    no_plot = True)
+    # ------------------------------------------------------------------
+    # Ruido instrumental blanco
+    # ------------------------------------------------------------------
+    def noise(spp, fwhm):
+        beam_size = sqrt(2. * pi * (fwhm * fwhm2sigma) ** 2)       # arcsec
+        sigma_noise = spp * (60. * 60. / beam_size)                # µK
+        return random.randn(npix, npix) * sigma_noise
 
-        if comp == "cmb":
-            label = omap
-            omap *= 1e6
-            plt.figure(1)
-            plt.imshow(omap), plt.colorbar()
-            plt.savefig('Label_low.pdf')
-            plt.close()
+    noise_c = noise(Simulation_Parameters["spp"], Simulation_Parameters["fwhm"])
+    noise_low = noise(Simulation_Parameters["spp_low"], Simulation_Parameters["fwhm_low"])
+    noise_high = noise(Simulation_Parameters["spp_high"], Simulation_Parameters["fwhm_high"])
 
-        if comp == "dust":
-            label = omap
-            omap *= 1e6
-            plt.figure(1)
-            plt.imshow(omap), plt.colorbar()
-            plt.savefig('dust_low.pdf')
-            plt.close()
+    _debug_plot(noise_c, 'Noise.pdf')
+    _debug_plot(noise_low, 'Noise_low.pdf')
+    _debug_plot(noise_high, 'Noise_high.pdf')
 
-        patch_low += omap
+    total_map = patch + noise_c + Tmap
+    total_map_low = patch_low + noise_low + Tmap_low
+    total_map_high = patch_high + noise_high + Tmap_high
 
-        # higher freq       
-        nm_map = Simulation_Parameters["channels_high"][0][comp]
-        imap = hp.fitsfunc.read_map(nm_map, field=0, memmap = True)
-        omap = hp.visufunc.gnomview(imap, rot = pos, xsize = Simulation_Parameters['npix'],
-                                    reso = Simulation_Parameters['pixsize'] / 60.,
-                                    notext = True, return_projected_map = True,
-                                    no_plot = True)
-
-        if comp == "cmb":
-            label = omap
-            omap *= 1e6
-            plt.figure(1)
-            plt.imshow(omap), plt.colorbar()
-            plt.savefig('Label_high.pdf')
-            plt.close()
-
-        if comp == "dust":
-            label = omap
-            omap *= 1e6
-            plt.figure(1)
-            plt.imshow(omap), plt.colorbar()
-            plt.savefig('dust_high.pdf')
-            plt.close()
-
-        patch_high += omap
-
-
-    plt.figure(1)
-    plt.imshow(patch), plt.colorbar()
-    plt.savefig('patch.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(patch_low), plt.colorbar()
-    plt.savefig('patch_low.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(patch_high), plt.colorbar()
-    plt.savefig('patch_high.pdf')
-    plt.close()
-
-    # add noise
-  
-    # central freq
-    beam_size = sqrt(2. * pi * (Simulation_Parameters["fwhm"] / (2 * sqrt(2 * log(2.))))**2)   
-    sigma_noise = Simulation_Parameters["spp"] * (60. * 60. / beam_size)       
-    # sigma_noise = Simulation_Parameters["spp"] * 1e-6 * (60. * 60. / Simulation_Parameters["pixsize"])       
-    Noise = random.randn(Simulation_Parameters['npix'],Simulation_Parameters['npix']) * sigma_noise
-    patch += Noise
-
-    plt.figure(1)
-    plt.imshow(Noise), plt.colorbar()
-    plt.savefig('Noise.pdf')
-    plt.close()
-
-    # lower freq
-    beam_size = sqrt(2. * pi * (Simulation_Parameters["fwhm_low"] / (2 * sqrt(2 * log(2.))))**2)  
-    sigma_noise = Simulation_Parameters["spp_low"] * (60. * 60. / beam_size)     
-    # sigma_noise = Simulation_Parameters["spp_low"] * 1e-6 * (60. * 60. / Simulation_Parameters["pixsize"])  
-    Noise = random.randn(Simulation_Parameters['npix'],Simulation_Parameters['npix']) * sigma_noise
-    patch_low += Noise
-
-    plt.figure(1)
-    plt.imshow(Noise), plt.colorbar()
-    plt.savefig('Noise_low.pdf') 
-    plt.close()
-
-    # higher freq
-    beam_size = sqrt(2. * pi * (Simulation_Parameters["fwhm_high"] / (2 * sqrt(2 * log(2.))))**2) 
-    sigma_noise = Simulation_Parameters["spp_high"] * (60. * 60. / beam_size)     
-    # sigma_noise = Simulation_Parameters["spp_high"] * 1e-6 * (60. * 60. / Simulation_Parameters["pixsize"])
-    Noise = random.randn(Simulation_Parameters['npix'],Simulation_Parameters['npix']) * sigma_noise
-    patch_high += Noise
-
-    plt.figure(1)
-    plt.imshow(Noise), plt.colorbar()
-    plt.savefig('Noise_high.pdf')
-    plt.close()           
-    
-    total_map = patch + Tmap
-    total_map_low = patch_low + Tmap_low
-    total_map_high = patch_high + Tmap_high
-
-    #print('mean', mean(total_map), 'std', std(total_map))
-    #print('mean', mean(patch), 'std', std(patch))
-    plt.figure(1)
-    plt.imshow(total_map), plt.colorbar()
-    plt.savefig('total_map.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(total_map_low), plt.colorbar()
-    plt.savefig('total_map_low.pdf')
-    plt.close()
-
-    plt.figure(1)
-    plt.imshow(total_map_high), plt.colorbar()
-    plt.savefig('total_map_high.pdf')
-    plt.close()
+    _debug_plot(total_map, 'total_map.pdf')
+    _debug_plot(total_map_low, 'total_map_low.pdf')
+    _debug_plot(total_map_high, 'total_map_high.pdf')
 
     return total_map_low, total_map, total_map_high, label
 
@@ -461,7 +281,7 @@ def conversion_factor_Jy_K(freq, pix_size):
 
     return fac
 
-def CreateRandomCatalogue(nmcat=None, Ns=1e3, ex_rad=6., cut=15.):
+def CreateRandomCatalogue(nmcat=None, Ns=1000, ex_rad=6., cut=15.):
     """ Create a random catalogue avoiding source positions
         from the PCCS input catalogue.
         Ns: Number of random positions
@@ -473,7 +293,9 @@ def CreateRandomCatalogue(nmcat=None, Ns=1e3, ex_rad=6., cut=15.):
     from numpy import random, pi, where, cos, sin, vstack, array, ones, delete, arcsin, ones, pi
     from scipy import spatial as sp
 
-    # Generate random all-sky catalogue
+    Ns = int(Ns)
+
+    # Generate random all-sky catalogue (|b| > cut)
     glon = random.uniform(0, 360, Ns*3)
     glat = arcsin(random.uniform(sin(cut*pi/180.), 1, size=Ns*3)) * 180. / pi
     segno = ones(len(glat), dtype=int)
@@ -496,15 +318,17 @@ def CreateRandomCatalogue(nmcat=None, Ns=1e3, ex_rad=6., cut=15.):
         iglon = hdu[1].data.field("GLON")
         iglat = hdu[1].data.field("GLAT")
 
-        xyz = lonlat_to_xyz(vstack((iglon, iglat)).swapaxes(0, 1))
-        iT = sp.cKDTree(xyz)
+        # Árboles con las posiciones aleatorias y las del catálogo de entrada
+        T = sp.cKDTree(lonlat_to_xyz(vstack((glon, glat)).swapaxes(0, 1)))
+        iT = sp.cKDTree(lonlat_to_xyz(vstack((iglon, iglat)).swapaxes(0, 1)))
+        chord = 2. * sin(ex_rad / 60. / 180. * pi / 2.)
         pairs = T.query_ball_tree(iT, chord)
 
         mask = ones(glon.size, dtype=bool)
 
-        for ii in xrange(len(pairs)):
+        for ii in range(len(pairs)):
             if pairs[ii]:
-                mask[pairs[ii]] = False
+                mask[ii] = False
 
         glon = glon[mask]
         glat = glat[mask]
@@ -621,9 +445,22 @@ def plot_fullsky_from_parfile(parfile_path):
 
 
 def main():
-  # Rutas relativas a src/simulation/ (en el TFG se ejecutó en Google Colab con Google Drive)
-  plot_fullsky_from_parfile('./sim_cfreq217.par')
-  #make_parallel_simu4CMB('./sim_cfreq217.par', '../../data/output_sims_train')
+    import argparse
+    parser = argparse.ArgumentParser(description="Simulaciones de parches del cielo de microondas para CENN.")
+    parser.add_argument("mode", nargs="?", default="simulate", choices=["simulate", "fullsky"],
+                        help="simulate: genera un dataset .h5; fullsky: mapas de cielo completo (figuras 10 y 11)")
+    parser.add_argument("--par", default="./sim_cfreq217.par", help="archivo de parámetros (JSON)")
+    parser.add_argument("--out", default="../../data/output_sims_train",
+                        help="ruta de salida sin la extensión .h5")
+    parser.add_argument("--n_sims", type=int, default=None,
+                        help="número de simulaciones (por defecto, el valor n_sims del .par)")
+    args = parser.parse_args()
+
+    if args.mode == "fullsky":
+        plot_fullsky_from_parfile(args.par)
+    else:
+        make_parallel_simu4CMB(args.par, args.out, args.n_sims)
+
 
 if __name__ == "__main__":
-        main()
+    main()

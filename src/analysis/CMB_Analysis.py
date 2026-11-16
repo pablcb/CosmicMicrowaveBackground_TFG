@@ -11,6 +11,7 @@ de los parches de 256x256 píxeles (90"/píxel) para:
   - la salida de cada modelo,
   - el mapa de residuos (entrada - salida),
 y lo reagrupa en bins de multipolos (25 para l <= 1000 y 200 para l > 1000).
+El espectro se calcula para el parche de validación PATCH_INDEX (5 por defecto).
 Dibuja tres paneles: comparación de espectros, diferencia Delta D_l y espectro de
 los residuos, comparando los modelos de compare_file_list.
 Genera las figuras 26, 27 y 31-33 de la memoria (con pequeñas variaciones en la
@@ -43,17 +44,20 @@ validation_file_list = [
 # Directorio para guardar imágenes
 Images_Directory = datasets_directory
 
+# Simulación de validación cuyo espectro se calcula (índice dentro del archivo)
+PATCH_INDEX = 5
+
 class Read():
 
     def reading_the_data(flag):
 
+        # Etiqueta (CMB de entrada, dataset "M0") del parche PATCH_INDEX
         with h5py.File(validation_file_list[flag], "r") as f:
-            a_group_key = list(f.keys())[1]
-            Input_CMB = list(f[a_group_key])[5]
+            Input_CMB = f["M0"][PATCH_INDEX]
 
+        # Salida de la red (dataset "M") para el mismo parche
         with h5py.File(compare_file_list[flag], "r") as g:
-            b_group_key = list(g.keys())[0]
-            Output_Net = list(g[b_group_key])[5]
+            Output_Net = g["M"][PATCH_INDEX]
 
         return Input_CMB, Output_Net
 

@@ -49,6 +49,13 @@ std_total = np.std(media_residuos)
 desviacion_total = np.mean(desviacion_residuos)
 std_desviacion = np.std(desviacion_residuos)
 
+# Incertidumbre global combinada: sqrt(std(medias)^2 + mean(desviaciones)^2)
+sigma_total = np.sqrt(std_total**2 + desviacion_total**2)
+
+print(f"Media de las medias: {media_total:.2f} µK | Dispersión de las medias: {std_total:.2f} µK")
+print(f"Media de las desviaciones: {desviacion_total:.2f} µK | Dispersión de las desviaciones: {std_desviacion:.2f} µK")
+print(f"Incertidumbre global combinada: {sigma_total:.2f} µK")
+
 # Pintamos los histogramas
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 

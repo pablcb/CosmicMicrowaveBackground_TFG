@@ -10,7 +10,7 @@ Los datasets del TFG (miles de parches de 256×256 píxeles en formato HDF5) **n
 | | `M0` | `(N, 256, 256, 1)` | Etiqueta: señal CMB |
 | Salidas de la red (`*_Outputs_CENN_I*.h5`) | `M` | `(N, 256, 256, 1)` | CMB recuperado por la red (desnormalizado) |
 
-Los scripts de análisis tratan los mapas como valores en K y los convierten a µK multiplicando por 10⁶.
+Todos los mapas están en K: `Simulate4CMB.py` los guarda así y los scripts de análisis los convierten a µK multiplicando por 10⁶.
 
 ## Organización esperada
 

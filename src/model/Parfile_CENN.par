@@ -5,5 +5,8 @@
     "test_frequency": 1,
     "L2_regularizer_value": 0.00001,
     "channels_order": "channels_last",
-    "padding_type": "same"
+    "padding_type": "same",
+    "activation": "leaky_relu",
+    "leaky_alpha": 0.2,
+    "depth": 6
 }

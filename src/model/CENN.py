@@ -10,7 +10,7 @@ CENN paper: https://arxiv.org/abs/2205.05623:
 
 # This module defines the Cosmic microwave background
 # extraction neural network (CENN) architecture and trains it
-# For using it: python CENN_Execute.py <Number of GPU>
+# For using it: python CENN.py {train,validate,both} [--gpu N]
 
 """
 CENN.py — Red neuronal completamente convolucional (tipo U-Net) para recuperar
@@ -33,16 +33,18 @@ Configuraciones estudiadas en el TFG
 - NN ReLU:      4 capas conv + 4 deconv, activación ReLU.
 - NN ReLUExt:   6 capas conv + 6 deconv, activación ReLU.
 - NN LeakyReLU: 6 capas conv + 6 deconv, activación LeakyReLU (alpha = 0.2).
-Para cambiar entre ellas:
-  * Activación: línea `activation_function = ...` dentro de build_model_Conv.
-  * Profundidad: entrada de `deconv3` -> `(add2)` usa 6+6 capas;
-    `(conv4_activation_function)` usa 4+4 capas (conv5, conv6, deconv1 y deconv2
-    quedan fuera del grafo).
+Se eligen en Parfile_CENN.par con las claves opcionales:
+  * "activation": "leaky_relu" (por defecto) o "relu",
+  * "leaky_alpha": pendiente negativa de LeakyReLU (por defecto 0.2),
+  * "depth": 6 (por defecto) o 4.
+Sin esas claves se construye el modelo final del TFG (NN LeakyReLU).
 
 Uso (desde esta carpeta):
-    python CENN.py
-con Parfile_CENN.par (hiperparámetros) y Parfile_I.par (rutas y tamaño de parche)
-en el directorio de trabajo. En main() se elige entre entrenar o validar.
+    python CENN.py train        # entrena y guarda el mejor modelo
+    python CENN.py validate     # aplica el modelo a la validación (por defecto)
+    python CENN.py both         # entrena y después valida
+Opciones: --nnpar (por defecto ./Parfile_CENN.par), --par (por defecto ./Parfile_I.par)
+y --gpu para elegir la GPU (CUDA_VISIBLE_DEVICES).
 """
 
 import tensorflow as tf
@@ -82,14 +84,6 @@ def _stem(path):
 
 ##############################################################################
 
-# def parse_arguments():
-    
-#     parser = argparse.ArgumentParser()
-
-#     parser.add_argument('GPU', type=str, help = 'Number of GPU you want to use')
-#     args = parser.parse_args()
-    
-#     return args
 
 def error(y_pred, y_true):
     
@@ -109,8 +103,23 @@ def build_model_Conv(nm_NNpar, nm_par):
     L2_regularizer_value = NNpar["L2_regularizer_value"]
     regularizer = keras.regularizers.l2(L2_regularizer_value)
     # regularizer = keras.regularizers.l2(0.000001)
-    activation_function = tf.keras.layers.LeakyReLU(alpha=0.2)
-    #activation_function = tf.keras.layers.ReLU(max_value = None, negative_slope = 0.0,threshold=0.0)
+
+    # Configuración de la red (ver cabecera): activación y profundidad.
+    # Por defecto, el modelo final del TFG: NN LeakyReLU (6 + 6 capas).
+    activation = NNpar.get("activation", "leaky_relu")
+    depth = NNpar.get("depth", 6)
+    if activation == "leaky_relu":
+        leaky_alpha = NNpar.get("leaky_alpha", 0.2)
+        try:
+            activation_function = tf.keras.layers.LeakyReLU(negative_slope=leaky_alpha)   # Keras 3
+        except TypeError:
+            activation_function = tf.keras.layers.LeakyReLU(alpha=leaky_alpha)            # Keras 2
+    elif activation == "relu":
+        activation_function = tf.keras.layers.ReLU()
+    else:
+        raise ValueError('activation debe ser "leaky_relu" o "relu"')
+    if depth not in (4, 6):
+        raise ValueError("depth debe ser 4 o 6")
     channels_order = NNpar["channels_order"]
     padding_type =  NNpar["padding_type"]
   
@@ -158,9 +167,13 @@ def build_model_Conv(nm_NNpar, nm_par):
   
     add2 = tf.keras.layers.Concatenate(axis=3)([conv4, deconv2_activation_function])
   
+    # depth = 6: deconv3 recibe add2 (conv5, conv6, deconv1 y deconv2 forman parte de la red).
+    # depth = 4: deconv3 recibe directamente conv4 y esos cuatro bloques quedan fuera del grafo.
+    deconv3_input = add2 if depth == 6 else conv4_activation_function
+
     deconv3 = Conv2DTranspose(filters = 64, kernel_size = 7, strides = 2, padding=padding_type,
                               data_format=channels_order, activation=None,
-                              kernel_regularizer = regularizer)(conv4_activation_function)#(add2)
+                              kernel_regularizer = regularizer)(deconv3_input)
   
     deconv3_activation_function = activation_function(deconv3)
   
@@ -251,20 +264,19 @@ def CENN_train(nm_NNpar, nm_par):
     # plt.show()
     # plt.savefig('./Models_'+Filtro+'/'+_stem(validation_file)+'_Accuracy_'+Filtro+'.pdf')
     # "Loss"
-    plt.plot(history.history['loss'])
-    plt.plot(history.history['val_loss'])
+    loss_hist = history.history['loss']
+    val_hist = history.history['val_loss']
+    plt.plot(np.arange(1, len(loss_hist) + 1), loss_hist)
+    plt.plot(np.arange(1, len(val_hist) + 1) * test_frequency, val_hist)   # validación cada test_frequency épocas
     plt.title('model loss')
     plt.ylabel('loss')
     plt.xlabel('epoch')
     plt.legend(['train', 'validation'], loc='upper left')
     # plt.show()
     plt.savefig('./Models_'+Filtro+'/'+_stem(train_file)+'_Loss_'+Filtro+'.pdf')
-    
-    results = model.predict(inputs_test)
-    #loss_error = error(results, labels_test)
-    print(str(datetime.now()))
+    plt.close()
 
-    pass
+    print(str(datetime.now()))
 
 
 def CENN_TestValidation(nm_par):
@@ -290,9 +302,8 @@ def CENN_TestValidation(nm_par):
     Model_file_path = './Models_'+Filtro+'/'+_stem(train_file)+'_Red_'+Filtro+'.h5'
     print(Model_file_path)
 
-    validation = h5py.File(validation_file, 'r')
-
-    inputs, labels, maximo, minimo = normalize(validation, Patch_Size, maxmin = True)  
+    with h5py.File(validation_file, 'r') as validation:
+        inputs, labels, maximo, minimo = normalize(validation, Patch_Size, maxmin = True)
 
     model = keras.models.load_model(Model_file_path)
     model.summary()
@@ -304,16 +315,9 @@ def CENN_TestValidation(nm_par):
     with h5py.File(out_file, 'w') as f:
         f['M'] = results_denorm
     
+    print('Predicciones guardadas en', out_file)
     print(str(datetime.now()))
 
-    pass
-
-    # save_data(results_denorm, labels_validation_no_normalized, name_output_file='Outputs_CENN_'+Filtro+'.h5')
-
-#if __name__ == "__main__":
-    #args = parse_arguments()
-    #os.environ["CUDA_VISIBLE_DEVICES"]= args.GPU
-    #train(batch_size, num_epochs, test_frequency, train_file_path, test_file_path, Patch_Size, Filtro)
 
 def denorm(results, maximo, minimo, Patch_Size):
     
@@ -381,64 +385,73 @@ def normalize(inp_file, Patch_Size, maxmin = False):
         return normalize_inputs, normalize_labels
 
 def read_validation_data(h5_file_path, Patch_Size):
-    
-    h5_file = h5py.File(h5_file_path, 'r')
-
-    inputs = h5_file["M"][:,:,:]
-    
-    labels = h5_file["M0"][:]
-    labels = np.ndarray.flatten(labels)
+    # Devuelve las etiquetas (N, Patch_Size, Patch_Size, 1) y los parches totales (N, Patch_Size, Patch_Size, 3)
+    with h5py.File(h5_file_path, 'r') as h5_file:
+        inputs = h5_file["M"][:, :Patch_Size, :Patch_Size, :]
+        labels = h5_file["M0"][:, :Patch_Size, :Patch_Size, :]
 
     return labels, inputs
+
 ################################
 ################################
-def plot_validaton_simu(nm_par,nsim):
+def plot_validaton_simu(nm_par, nsim):
+    # Figura rápida de control: parche total (canal central), etiqueta y salida de la red
+    # para la simulación de validación número nsim.
 
     with open(nm_par) as par_file:
         Par = json.loads(par_file.read())
     Patch_Size = Par["Patch_Size"]
     Filtro = Par["Filtro"]
-    train_file = Par["train_file"]
     validation_file = Par["validation_file"]
 
-    ###### to be checked
-    # best_model_nm = Par["best_model_nm"]
     out_file = './Models_'+Filtro+'/'+_stem(validation_file)+'_Outputs_CENN_'+Filtro+'.h5'
 
-    
-    labels, inputs = read_validation_data(train_file, Patch_Size)
+    labels, inputs = read_validation_data(validation_file, Patch_Size)
 
-    h5_file = h5py.File(out_file, 'r')
-    outpus = h5_file["M"][:,:,:]
+    with h5py.File(out_file, 'r') as h5_file:
+        outputs = h5_file["M"][:]
 
-    figure(1)
-
-    fig, ([ax0, ax1, ax2]) = plt.subplots(1, 3, figsize=(16,6))
+    fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(16, 6))
     fig.tight_layout(pad=4.0)
-            
+
     ax0.title.set_text('Input Total')
     ax1.title.set_text('Label')
     ax2.title.set_text('Output')
 
-    fig0=ax0.imshow((inputs[nsim,:,:,0]))
+    fig0 = ax0.imshow(inputs[nsim, :, :, 1])
     fig.colorbar(fig0, ax=ax0, fraction=0.046, pad=0.04)
-            
-    fig1=ax1.imshow((labels[nsim,:,:,0]))
+
+    fig1 = ax1.imshow(labels[nsim, :, :, 0])
     fig.colorbar(fig1, ax=ax1, fraction=0.046, pad=0.04)
-            
-    fig2=ax2.imshow(outputs[nsim,:,:,0])
+
+    fig2 = ax2.imshow(outputs[nsim, :, :, 0])
     fig.colorbar(fig2, ax=ax2, fraction=0.046, pad=0.04)
 
-    savefig('./Models_'+Filtro+'/'+_stem(validation_file)+'_Outputs_CENN_'+Filtro+'_'+str(nsim)+'.pdf')
-
-pass
+    fig.savefig('./Models_'+Filtro+'/'+_stem(validation_file)+'_Outputs_CENN_'+Filtro+'_'+str(nsim)+'.pdf')
+    plt.close(fig)
 
 ################################
 ################################
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Entrenamiento y validación de la red CENN.")
+    parser.add_argument("mode", nargs="?", default="validate", choices=["train", "validate", "both"],
+                        help="train: entrena; validate: aplica el modelo a la validación; both: ambas cosas")
+    parser.add_argument("--nnpar", default="./Parfile_CENN.par", help="hiperparámetros de la red (JSON)")
+    parser.add_argument("--par", default="./Parfile_I.par", help="rutas de los datasets y tamaño de parche (JSON)")
+    parser.add_argument("--gpu", default=None, help="GPU a utilizar (CUDA_VISIBLE_DEVICES)")
+    return parser.parse_args()
+
 
 def main():
-    #CENN_train("./Parfile_CENN.par", "./Parfile_I.par")
-    CENN_TestValidation("./Parfile_I.par")
+    args = parse_arguments()
+    if args.gpu is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+
+    if args.mode in ("train", "both"):
+        CENN_train(args.nnpar, args.par)
+    if args.mode in ("validate", "both"):
+        CENN_TestValidation(args.par)
 
 
 if __name__ == "__main__":
