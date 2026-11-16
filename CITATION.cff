@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "Si utilizas este código o sus resultados, por favor cita este Trabajo Fin de Grado."
+title: "Aplicación de redes neuronales a imágenes del CMB para incrementar su resolución"
+type: software
+authors:
+  - given-names: "Pablo"
+    family-names: "Claudio Baragaño"
+    affiliation: "Universidad de Oviedo"
+repository-code: "https://github.com/pablcb/CosmicMicrowaveBackground_TFG"
+date-released: 2025-05-30
+keywords:
+  - cosmic microwave background
+  - CMB
+  - deep learning
+  - convolutional neural networks
+  - U-Net
+  - super-resolution
+  - Planck
+  - cosmology
+preferred-citation:
+  type: thesis
+  title: "Aplicación de redes neuronales a imágenes del CMB para incrementar su resolución"
+  authors:
+    - given-names: "Pablo"
+      family-names: "Claudio Baragaño"
+  thesis-type: "Trabajo Fin de Grado (Grado en Física)"
+  institution:
+    name: "Universidad de Oviedo"
+  year: 2025
+  url: "https://github.com/pablcb/CosmicMicrowaveBackground_TFG"
+references:
+  - type: article
+    title: "CENN: A fully convolutional neural network for CMB recovery in realistic microwave sky simulations"
+    authors:
+      - family-names: "Casas"
+        given-names: "J. M."
+      - name: "et al."
+    journal: "Astronomy & Astrophysics"
+    volume: 666
+    start: "A89"
+    year: 2022
+    doi: "10.1051/0004-6361/202243450"

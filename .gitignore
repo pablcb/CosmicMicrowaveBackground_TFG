@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# Datos y modelos (demasiado grandes para el repositorio)
+*.h5
+*.hdf5
+*.fits
+data/*
+!data/README.md
+src/model/Models_*/
+
+# Figuras y PDFs generados al ejecutar los scripts
+src/**/*.pdf
+src/**/*.png
+
+# Sistema
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

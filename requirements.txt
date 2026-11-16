@@ -1,0 +1,14 @@
+# Red neuronal
+tensorflow>=2.10
+
+# Cálculo y datos
+numpy
+scipy
+h5py
+
+# Simulaciones del cielo (healpy no tiene soporte nativo en Windows)
+healpy
+astropy
+
+# Figuras
+matplotlib
